@@ -342,6 +342,11 @@ async function restoreNugetPackage(packageName: string, packageVersion: string, 
 
 async function doPackageOffline(vsixPlatform: VSIXPlatformInfo | undefined, options: VsixReleasePackageOptions) {
     await cleanAsync();
+    // Save the original package files so that they can be restored after packaging.
+    const packageJsonPath = path.join(rootPath, 'package.json');
+    const packageLockPath = path.join(rootPath, 'package-lock.json');
+    const originalPackageJson = fs.readFileSync(packageJsonPath, 'utf-8');
+    const originalPackageLock = fs.readFileSync(packageLockPath, 'utf-8');
     // Set the package.json version based on the value in version.json.
     const versionInfo = await nbgv.getVersion();
     console.log(versionInfo.npmPackageVersion);
@@ -377,8 +382,9 @@ async function doPackageOffline(vsixPlatform: VSIXPlatformInfo | undefined, opti
             cause: err,
         });
     } finally {
-        // Reset package version to the placeholder value.
-        await nbgv.resetPackageVersionPlaceholder();
+        // Restore the original package files, which have the placeholder version.
+        fs.writeFileSync(packageJsonPath, originalPackageJson);
+        fs.writeFileSync(packageLockPath, originalPackageLock);
     }
 }
 

@@ -73,8 +73,12 @@ export async function generateVsixManifest(vsixPath: string) {
     const outputFolder = parsed.dir;
     const vsixNameWithoutExtension = parsed.name;
 
+    const manifestPath = path.join(outputFolder, `${vsixNameWithoutExtension}.manifest`);
+    // vsce does not overwrite an existing manifest, so remove the one from the previous run.
+    fs.rmSync(manifestPath, { force: true });
+
     vsceArgs.push('-o');
-    vsceArgs.push(path.join(outputFolder, `${vsixNameWithoutExtension}.manifest`));
+    vsceArgs.push(manifestPath);
 
     const spawnResult = await spawnNode(vsceArgs);
     if (spawnResult.code != 0) {
