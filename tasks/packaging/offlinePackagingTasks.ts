@@ -418,6 +418,13 @@ async function buildVsix(packageJSON: any, options: VsixReleasePackageOptions, p
     if (platformInfo != null) {
         await installRazor(packageJSON, platformInfo.platformInfo, options.codeExtensionPath);
         await installDebugger(packageJSON, platformInfo.platformInfo, options.codeExtensionPath);
+        // Ship VSWebAssemblyBridge with the extension instead of downloading it at first activation.
+        await installPackageJsonDependency(
+            'VSWebAssemblyBridge',
+            packageJSON,
+            platformInfo.platformInfo,
+            options.codeExtensionPath
+        );
     }
 
     const packageFileName = getPackageName(packageJSON, platformInfo?.vsceTarget);
