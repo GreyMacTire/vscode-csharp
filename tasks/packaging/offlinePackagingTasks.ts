@@ -108,8 +108,12 @@ interface PlatformEntry {
     vsixPlatform: VSIXPlatformInfo;
 }
 
+// vsce targets to package VSIX files for. The other targets in platformSpecificPackages
+// are only used to install dependencies for the current platform.
+const packagedVsceTargets = ['win32-x64', 'linux-x64', 'darwin-x64', 'darwin-arm64'];
+
 const platformEntries: PlatformEntry[] = [];
-for (const p of platformSpecificPackages) {
+for (const p of platformSpecificPackages.filter((platform) => packagedVsceTargets.includes(platform.vsceTarget))) {
     let platformName: string;
     if (p.platformInfo.isWindows()) {
         platformName = 'windows';
