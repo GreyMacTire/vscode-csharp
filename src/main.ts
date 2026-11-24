@@ -39,9 +39,17 @@ export async function activate(
 
     util.setExtensionPath(context.extension.extensionPath);
 
-    const aiKey = context.extension.packageJSON.contributes.debuggers[0].aiKey;
-    const reporter = new TelemetryReporter(aiKey);
-    // ensure it gets properly disposed. Upon disposal the events will be flushed.
+    // Telemetry is off in this fork: the reporter drops every event and tells the language server so.
+    const reporter: TelemetryReporter = {
+        telemetryLevel: 'off',
+        onDidChangeTelemetryLevel: () => ({ dispose: () => {} }),
+        sendTelemetryEvent: () => {},
+        sendRawTelemetryEvent: () => {},
+        sendDangerousTelemetryEvent: () => {},
+        sendTelemetryErrorEvent: () => {},
+        sendDangerousTelemetryErrorEvent: () => {},
+        dispose: async () => {},
+    };
     context.subscriptions.push(reporter);
 
     const eventStream = new EventStream();
