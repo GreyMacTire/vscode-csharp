@@ -84,9 +84,6 @@ export async function activate(
         requiredPackageIds.push('OmniSharp');
     }
     requiredPackageIds.push('VSWebAssemblyBridge');
-    if (csharpDevkitExtension && !commonOptions.disableAIFeatures) {
-        requiredPackageIds.push('RoslynCopilot');
-    }
 
     const networkSettingsProvider = vscodeNetworkSettingsProvider(vscode);
     const useFramework = useOmnisharpServer && omnisharpOptions.useModernNet !== true;
