@@ -1,0 +1,188 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as process from 'node:process';
+import { spawnSync } from 'node:child_process';
+import * as path from 'path';
+import { format, parseArgs } from 'node:util';
+import { EOL } from 'node:os';
+import { Octokit } from '@octokit/rest';
+import { runTask } from '../runTask';
+
+const localizationLanguages = ['cs', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'pl', 'pt-br', 'ru', 'tr', 'zh-cn', 'zh-tw'];
+
+type GitOptions = {
+    printCommand?: boolean;
+    sensitiveValues?: readonly string[];
+};
+
+runTask(publishLocalizationContent);
+
+async function publishLocalizationContent() {
+    const { values } = parseArgs({
+        options: {
+            userName: { type: 'string' },
+            email: { type: 'string' },
+            commitSha: { type: 'string' },
+            targetRemoteRepo: { type: 'string' },
+            baseBranch: { type: 'string' },
+        },
+    });
+    const parsedArgs = {
+        userName: values.userName,
+        email: values.email,
+        commitSha: requireArgument('commitSha', values.commitSha),
+        targetRemoteRepo: requireArgument('targetRemoteRepo', values.targetRemoteRepo),
+        baseBranch: requireArgument('baseBranch', values.baseBranch),
+    };
+    const localizationChanges = getAllPossibleLocalizationFiles();
+    await git(['add'].concat(localizationChanges));
+
+    // Check only staged localization files; other build steps may leave unrelated tracked files modified.
+    const diff = await git_diff(['--cached', '--name-only']);
+    if (diff.length == 0) {
+        console.log('No localization file changed');
+        return;
+    }
+
+    console.log(`Changed files going to be staged: ${diff}`);
+
+    const newBranchName = `localization/${parsedArgs.commitSha}`;
+    // Make this optional so it can be tested locally by using dev's information. In real CI user name and email are always supplied.
+    if (parsedArgs.userName) {
+        await git(['config', '--local', 'user.name', parsedArgs.userName]);
+    }
+    if (parsedArgs.email) {
+        await git(['config', '--local', 'user.email', parsedArgs.email]);
+    }
+
+    await git(['checkout', '-b', newBranchName]);
+    await git(['commit', '-m', `Localization result of ${parsedArgs.commitSha}.`]);
+
+    const token = process.env['GitHubToken'];
+    if (!token) {
+        throw new Error('No GitHub token found.');
+    }
+
+    const remoteRepoAlias = 'targetRepo';
+    await git(
+        [
+            'remote',
+            'add',
+            remoteRepoAlias,
+            `https://x-access-token:${token}@github.com/dotnet/${parsedArgs.targetRemoteRepo}.git`,
+        ],
+        {
+            printCommand: false,
+            sensitiveValues: [token],
+        }
+    );
+    await git(['fetch', remoteRepoAlias], { sensitiveValues: [token] });
+
+    const lsRemote = await git(['ls-remote', remoteRepoAlias, 'refs/head/' + newBranchName], {
+        sensitiveValues: [token],
+    });
+    if (lsRemote.trim() !== '') {
+        // If the localization branch of this commit already exists, don't try to create another one.
+        console.log(
+            `##vso[task.logissue type=error]${newBranchName} already exists in ${parsedArgs.targetRemoteRepo}. Skip pushing.`
+        );
+    } else {
+        await git(['push', '-u', remoteRepoAlias], { sensitiveValues: [token] });
+    }
+
+    const octokit = new Octokit({ auth: token });
+    const listPullRequest = await octokit.rest.pulls.list({
+        owner: 'dotnet',
+        repo: parsedArgs.targetRemoteRepo,
+    });
+
+    if (listPullRequest.status != 200) {
+        throw new Error(`Failed get response from GitHub, http status code: ${listPullRequest.status}`);
+    }
+
+    const title = `Localization result based on ${parsedArgs.commitSha}`;
+    if (listPullRequest.data.some((pr) => pr.title === title)) {
+        console.log('Pull request with the same name already exists. Skip creation.');
+        return;
+    }
+
+    const pullRequest = await octokit.rest.pulls.create({
+        body: title,
+        owner: 'dotnet',
+        repo: parsedArgs.targetRemoteRepo,
+        title: title,
+        head: newBranchName,
+        base: parsedArgs.baseBranch,
+    });
+
+    console.log(`Created pull request: ${pullRequest.data.html_url}.`);
+}
+
+function requireArgument(name: string, value: string | undefined): string {
+    if (!value) {
+        throw new Error(`Missing required argument: --${name}`);
+    }
+    return value;
+}
+
+function getAllPossibleLocalizationFiles(): string[] {
+    const files = [];
+    for (const lang of localizationLanguages) {
+        files.push('l10n' + path.sep + format('bundle.l10n.%s.json', lang));
+        files.push(format('package.nls.%s.json', lang));
+    }
+    // English
+    files.push(`l10n${path.sep}bundle.l10n.json`);
+    return files;
+}
+
+async function git_diff(args: string[]): Promise<string[]> {
+    const result = await git(['diff'].concat(args));
+    // Line ending from the stdout of git is '\n' even on Windows.
+    return result
+        .replaceAll('\n', EOL)
+        .split(EOL)
+        .map((fileName, _) => fileName.trim())
+        .filter((fileName) => fileName.length !== 0);
+}
+
+async function git(args: string[], options: GitOptions = {}): Promise<string> {
+    const { printCommand = true, sensitiveValues = [] } = options;
+    if (printCommand) {
+        console.log(`git ${args.join(' ')}`);
+    }
+
+    const result = spawnSync('git', args, { encoding: 'utf8' });
+    const command = printCommand ? `git ${args.join(' ')}` : 'git command';
+    if (result.error) {
+        throw new Error(`Failed to start ${command}: ${redact(result.error.message, sensitiveValues)}`);
+    }
+    if (result.status != 0) {
+        const output = redact(
+            [result.stderr, result.stdout]
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0)
+                .join(EOL),
+            sensitiveValues
+        );
+        if (printCommand) {
+            console.error(`Failed to execute ${command}.`);
+        }
+        throw new Error(output || `${command} failed with code ${result.status}.`);
+    }
+
+    const stdout = result.stdout;
+    if (printCommand) {
+        console.log(stdout);
+    }
+    return stdout;
+}
+
+function redact(value: string, sensitiveValues: readonly string[]): string {
+    return sensitiveValues
+        .filter((sensitiveValue) => sensitiveValue.length > 0)
+        .reduce((redactedValue, sensitiveValue) => redactedValue.replaceAll(sensitiveValue, '***'), value);
+}

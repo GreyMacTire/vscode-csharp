@@ -1,0 +1,189 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - feature/*
+    - release
+    - prerelease
+    - main
+
+pr:
+  branches:
+    include:
+    - dev/*
+    - feature/*
+    - release
+    - prerelease
+    - main
+  paths:
+    # Exclude paths and files which do not cause functional changes to the C# extension and do not impact CI.
+    exclude:
+    # Changes to these configuration files are not functional changes.
+    - .azuredevops/*
+    - .config/*
+    - .devcontainer/*
+    - .github/*
+    - .vscode/*
+    # The following pipelines are not run for PRs and changes should be validated by a separate run of the pipeline.
+    - azure-pipelines/dotnet-vscode-csharp-insertion.yml
+    - azure-pipelines/loc.yml
+    - azure-pipelines/release.yml
+    - azure-pipelines/profiling.yml
+    - azure-pipelines/publish-roslyn-copilot.yml
+    # Changes to documentation are not functional changes.
+    - docs/*
+    - images/*
+    - RuntimeLicenses/*
+    # Changes to language bundles are not functional changes. We still run CI when `l10n/bundle.l10n.json` itself is changed.
+    - 'l10n/bundle.l10n.*.json'
+    # Changes to the color themes are not functional changes.
+    - themes/*
+    # Changes to documentation are not functional changes.
+    - '**.md'
+    - CODEOWNERS
+    # Changes to init.ps1 is not exercised in CI
+    - 'init.ps1'
+    # Changes to the vesion is not a functional change. The extension version is updated by the branch-snap GH action.
+    - 'version.json'
+    # Changes to text files (e.g. third party notices) are not functional changes.
+    - '**.txt'
+
+# Run a scheduled build every night on main to run tests against insiders VSCode.
+# The variable testVSCodeVersion is set to insiders based on the build reason.
+schedules:
+  - cron: "0 0 * * *"
+    displayName: Daily Insiders Build
+    branches:
+      include:
+        - main
+
+variables:
+- name: AZP_AGENT_USE_NODE24_TO_START_CONTAINER
+  value: 'true'
+- name: testVSCodeVersion
+  ${{ if eq( variables['Build.Reason'], 'Schedule' ) }}:
+    value: insiders
+  ${{ else }}:
+    value: stable
+
+stages:
+- template: azure-pipelines/build-vsix.yml
+  parameters:
+    isOfficial: false
+    signType: test
+
+- template: azure-pipelines/validate-build.yml
+
+- stage:
+  displayName: Test Linux (.NET 8)
+  dependsOn: []
+  variables:
+    ROSLYN_SKIP_TEST_FILE_BASED_PROGRAMS: 'true'
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: linux
+      # Prefer the dotnet from the container.
+      installDotNet: false
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: NetCore-Public
+        demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+      containerName: mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-net8.0-vscode-csharp-amd64
+
+- stage:
+  displayName: Test Linux (.NET 9)
+  dependsOn: []
+  variables:
+    ROSLYN_SKIP_TEST_FILE_BASED_PROGRAMS: 'true'
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: linux
+      # Prefer the dotnet from the container.
+      installDotNet: false
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: NetCore-Public
+        demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+      containerName: mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-net9.0-vscode-csharp-amd64
+
+- stage:
+  displayName: Test Linux (.NET 10)
+  dependsOn: []
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: linux
+      # Prefer the dotnet from the container.
+      installDotNet: false
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: NetCore-Public
+        demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+      containerName: mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-net10.0-vscode-csharp-amd64
+
+- stage:
+  displayName: Test Linux (.NET 11)
+  dependsOn: []
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: linux
+      # Prefer the dotnet from the container.
+      installDotNet: false
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: NetCore-Public
+        demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+      containerName: mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-net11.0-vscode-csharp-amd64
+
+- stage: Test_Windows_Stage
+  displayName: Test Windows
+  dependsOn: []
+  variables:
+    ROSLYN_SKIP_TEST_FILE_BASED_PROGRAMS: 'true'
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: windows
+      installDotNet: true
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: NetCore-Public
+        demands: ImageOverride -equals 1es-windows-2022-open
+
+- stage: Test_MacOS_Stage
+  displayName: Test MacOS
+  dependsOn: []
+  variables:
+    ROSLYN_SKIP_TEST_FILE_BASED_PROGRAMS: 'true'
+  jobs:
+  - template: azure-pipelines/test-matrix.yml
+    parameters:
+      os: macos
+      installDotNet: true
+      testVSCodeVersion: $(testVSCodeVersion)
+      pool:
+        name: Azure Pipelines
+        vmImage: macOS-15-arm64
+
+- stage: Test_OmniSharp
+  displayName: Test OmniSharp
+  dependsOn: []
+  jobs:
+  - job: Test
+    strategy:
+      matrix:
+        linux:
+          demandsName: build.ubuntu.2204.amd64.open
+        windows:
+          demandsName: 1es-windows-2022-open
+    pool:
+      name: NetCore-Public
+      demands: ImageOverride -equals $(demandsName)
+    steps:
+    - template: azure-pipelines/test-omnisharp.yml
+      parameters:
+        installDotNet: true
+        testVSCodeVersion: $(testVSCodeVersion)

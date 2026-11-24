@@ -1,0 +1,85 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+import { mapAsync } from '../../common';
+import {
+    IWorkspaceDebugInformationProvider,
+    ProjectDebugInformation,
+} from '../../shared/IWorkspaceDebugInformationProvider';
+import {
+    isBlazorWebAssemblyHosted,
+    isBlazorWebAssemblyHostedServer,
+    isBlazorWebAssemblyProject,
+    isWebProject,
+} from '../../shared/utils';
+import { RoslynLanguageServer } from '../server/roslynLanguageServer';
+import {
+    ProjectDebugConfiguration,
+    WorkspaceDebugConfigurationParams,
+    WorkspaceDebugConfigurationRequest,
+} from '../server/roslynProtocol';
+import { UriConverter } from '../utils/uriConverter';
+
+export class RoslynWorkspaceDebugInformationProvider implements IWorkspaceDebugInformationProvider {
+    constructor(
+        private server: RoslynLanguageServer,
+        private outputChannel: vscode.LogOutputChannel
+    ) {}
+
+    public async getWorkspaceDebugInformation(
+        workspaceFolder: vscode.Uri
+    ): Promise<ProjectDebugInformation[] | undefined> {
+        if (!this.server.isRunning()) {
+            return;
+        }
+
+        const params: WorkspaceDebugConfigurationParams = {
+            workspacePath: UriConverter.serialize(workspaceFolder),
+        };
+
+        let response: ProjectDebugConfiguration[];
+        try {
+            response = await this.server.sendRequest(
+                WorkspaceDebugConfigurationRequest.type,
+                params,
+                new vscode.CancellationTokenSource().token
+            );
+        } catch (e) {
+            // Server errors are already logged by the language client, but its totally possible
+            // that we fail because the server is restarting or a process got killed, etc.
+            // Catch the error and log to the correct output (instead of going to the extension host output).
+            this.outputChannel.error(`Failed to get debug configuration`, e);
+            return;
+        }
+
+        // LSP serializes and deserializes URIs as (URI formatted) strings not actual types.  So convert to the actual type here.
+        const projects: ProjectDebugInformation[] = await mapAsync(response, async (p) => {
+            const [webProject, webAssemblyProject] = isWebProject(p.projectPath);
+            const webAssemblyBlazor = await isBlazorWebAssemblyProject(p.projectPath);
+            // Hosted detection is additive: the original launchSettings-based heuristic, plus the
+            // newer static heuristic (Web SDK host referencing the WebAssembly.Server package).
+            const hosted =
+                isBlazorWebAssemblyHosted(p.isExe, webProject, webAssemblyBlazor, p.targetsDotnetCore) ||
+                isBlazorWebAssemblyHostedServer(p.projectPath, p.isExe, webProject);
+            return {
+                projectPath: p.projectPath,
+                outputPath: p.outputPath,
+                projectName: p.projectName,
+                targetsDotnetCore: p.targetsDotnetCore,
+                isExe: p.isExe,
+                isWebProject: webProject,
+                isWebAssemblyProject: webAssemblyProject,
+                isBlazorWebAssemblyHosted: hosted,
+                // Standalone detection is additive: the original launchSettings-based heuristic, plus
+                // the newer WebAssembly SDK project signal. A hosted project is never standalone.
+                isBlazorWebAssemblyStandalone: (webAssemblyBlazor || webAssemblyProject) && !hosted,
+                solutionPath: p.solutionPath,
+            };
+        });
+
+        return projects;
+    }
+}

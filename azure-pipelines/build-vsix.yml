@@ -1,0 +1,135 @@
+parameters:
+- name: versionNumberOverride
+  type: string
+  default: 'default'
+- name: isOfficial
+  type: boolean
+- name: channel
+  values:
+  - release
+  - prerelease
+  - auto
+  default: auto
+- name: signType
+  values:
+  - test
+  - real
+  - auto
+  default: auto
+
+stages:
+- stage: BuildVSIX
+  displayName: 'Build VSIXs'
+  dependsOn: []
+  jobs:
+  - job: 'Build_vsixs'
+    displayName: 'Build VSIXs'
+    pool:
+      ${{ if eq(parameters.isOfficial, true) }}:
+        name: netcore1espool-internal
+        image: 1es-ubuntu-2204
+      ${{ else }}:
+        name: NetCore-Public
+        demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+      os: linux
+    variables:
+      teamName: DotNetCore
+    ${{ if eq(parameters.isOfficial, true) }}:
+      templateContext:
+        outputs:
+          - output: pipelineArtifact
+            path: $(Build.SourcesDirectory)/Packages
+            artifact: Packages
+            condition: always()
+          - output: pipelineArtifact
+            path: $(Build.SourcesDirectory)/out/logs
+            artifact: SigningLogs
+            condition: always()
+    steps:
+    - checkout: self
+      clean: true
+      submodules: true
+      fetchTags: false
+      fetchDepth: 0
+
+    - template: /azure-pipelines/set-run-variables.yml@self
+      parameters:
+        isOfficial: ${{ parameters.isOfficial }}
+        channel: ${{ parameters.channel }}
+        signType: ${{ parameters.signType }}
+
+    - template: /azure-pipelines/prereqs.yml@self
+      parameters:
+        versionNumberOverride: ${{ parameters.versionNumberOverride }}
+        installDotNet: true
+
+    # Non-windows signing requires .NET 8 installed on the machine.
+    - task: UseDotNet@2
+      displayName: Use .NET Core sdk 8.0.x
+      inputs:
+        version: 8.0.x
+    # If we're in an official build, install the signing plugin
+    - ${{ if eq(parameters.isOfficial, true) }}:
+      - task: MicroBuildSigningPlugin@4
+        displayName: 🔧 Install MicroBuild Signing Plugin
+        inputs:
+          signType: $(signType)
+          zipSources: false
+          feedSource: https://dnceng.pkgs.visualstudio.com/_packaging/MicroBuildToolset/nuget/v3/index.json
+          azureSubscription: 'MicroBuild Signing Task (DevDiv)'
+          # ConnectedPMEServiceName is only required for CI builds. This service name is dependent on the AzDo org as well.
+          ${{ if eq(variables['Build.Reason'], 'IndividualCI') }}:
+            ConnectedPMEServiceName: c24de2a5-cc7a-493d-95e4-8e5ff5cad2bc
+        env:
+          SignType: $(signType)
+          TeamName: $(teamName)
+
+    - pwsh: |
+        Write-Host "Building VSIXs for channel $(channel)"
+        if ("$(channel)" -eq "Release") {
+          npm run vsix:release:package
+        } else {
+          npm run vsix:release:package -- --prerelease
+        }
+      displayName: 'Build VSIXs'
+      env:
+        SignType: $(signType)
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+    - ${{ if eq(parameters.isOfficial, true) }}:
+      - script: npm run signVsix
+        condition: succeeded()
+        displayName: 'Sign VSIXs'
+        env:
+          # Non-windows signing requires this token to be passed with signing step.
+          SignType: $(signType)
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)/vsix'
+        TargetFolder: '$(Build.SourcesDirectory)/Packages/VSIX_$(channel)'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Publish-Vsix script to Packages'
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)/azure-pipelines'
+        Contents: 'Publish-Vsix.ps1'
+        TargetFolder: '$(Build.SourcesDirectory)/Packages'
+
+    - ${{ if eq(parameters.isOfficial, true) }}:
+      - script: npm run verifyVsix
+        condition: and( succeeded(), eq('$(SignType)', 'Real'))
+        displayName: 🔑 Verify VSIX Signature Files
+        workingDirectory: '$(Build.SourcesDirectory)/Packages/VSIX_$(channel)'
+
+    - ${{ if ne(parameters.isOfficial, true) }}:
+      - task: PublishPipelineArtifact@1
+        condition: succeeded()
+        displayName: 'Publish VSIXs'
+        inputs:
+          targetPath: '$(Build.SourcesDirectory)/Packages'
+          artifact: 'Packages'
+
+    - script: npm run test:artifacts
+      displayName: 'Run artifacts tests'

@@ -1,0 +1,106 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+import * as crypto from 'crypto';
+import { RoslynLanguageServer } from '../server/roslynLanguageServer';
+import { ActionOption, showWarningMessage } from '../../shared/observers/utils/showMessage';
+import { languageServerOptions } from '../../shared/options';
+import { ServerState } from '../server/languageServerEvents';
+import type { ProjectContextChangeEvent } from '../projectContext/projectContextService';
+import { LanguageSupportState } from '../../csharpExtensionExports';
+import { getCSharpDevKit } from '../../utils/getCSharpDevKit';
+
+const SuppressMiscellaneousFilesToastsOption = 'dotnet.server.suppressMiscellaneousFilesToasts';
+const NotifiedDocuments = new Set<string>();
+
+export function getLanguageSupportState(
+    event: ProjectContextChangeEvent,
+    serverState: ServerState
+): LanguageSupportState {
+    if (serverState !== ServerState.ProjectInitializationComplete) {
+        return 'unknown';
+    }
+
+    // Note: non-empty '_vs_id' is checked for sanity, before concluding that full support is available,
+    // to ensure that full support is not reported for 'ProjectContextService._emptyProjectContext'
+    if (!event.context._vs_is_miscellaneous && event.context._vs_id) {
+        return 'full';
+    }
+
+    return 'limited';
+}
+
+export function registerMiscellaneousFileNotifier(
+    context: vscode.ExtensionContext,
+    languageServer: RoslynLanguageServer
+) {
+    languageServer._projectContextService.onActiveFileContextChanged(async (e) => {
+        if (getCSharpDevKit()) {
+            // Don't notify if CDK is loaded, since CDK uses its own degraded experience UI separately.
+            return;
+        }
+
+        if (e.document.uri.scheme !== 'file' || e.document.languageId !== 'csharp') {
+            return;
+        }
+
+        if (!e.isVerified) {
+            return;
+        }
+
+        if (getLanguageSupportState(e, languageServer.state) !== 'limited') {
+            return;
+        }
+
+        // Check settings and workspaceState to see if we should suppress the toast.
+        if (
+            languageServerOptions.suppressMiscellaneousFilesToasts ||
+            context.workspaceState.get<boolean>(SuppressMiscellaneousFilesToastsOption, false)
+        ) {
+            return;
+        }
+
+        // Check to see if we have already notified the user about this document.
+        const hash = createHash(e.document.uri.toString(/*skipEncoding:*/ true));
+        if (NotifiedDocuments.has(hash)) {
+            return;
+        }
+
+        const isDeleted = await isDeletedFile(e.document);
+        if (isDeleted) {
+            // Don't show the toast for deleted files - by definition they cannot be part of the workspace.
+            return;
+        }
+
+        NotifiedDocuments.add(hash);
+
+        const message = vscode.l10n.t(
+            'The active document is not part of the open workspace. Not all language features will be available.'
+        );
+        const dismissItem = vscode.l10n.t('Dismiss');
+        // Provide the user a way to easily disable the toast without changing settings.
+        const disableWorkspace: ActionOption = {
+            title: vscode.l10n.t('Do not show for this workspace'),
+            action: async () => {
+                context.workspaceState.update(SuppressMiscellaneousFilesToastsOption, true);
+            },
+        };
+        showWarningMessage(vscode, message, dismissItem, disableWorkspace);
+    });
+}
+
+async function isDeletedFile(document: vscode.TextDocument): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.stat(document.uri);
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+function createHash(data: string): string {
+    return crypto.createHash('sha256').update(data).digest('hex');
+}

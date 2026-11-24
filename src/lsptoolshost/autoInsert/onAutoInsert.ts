@@ -1,0 +1,164 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import * as vscode from 'vscode';
+import * as RoslynProtocol from '../server/roslynProtocol';
+import { RoslynLanguageServer } from '../server/roslynLanguageServer';
+import { FormattingOptions, InsertTextFormat, Range, TextDocumentIdentifier } from 'vscode-languageclient';
+import { LanguageClient } from 'vscode-languageclient/node';
+
+export function registerOnAutoInsert(languageServer: RoslynLanguageServer, languageClient: LanguageClient) {
+    let source = new vscode.CancellationTokenSource();
+
+    // We explicitly register against the server's didChange notification (instead of the VSCode workspace API)
+    // as we want to ensure that the server has processed the change before we request edits from auto insert.
+    // The VSCode workspace API will sometimes call this before the LSP client can send the change, leading to auto insert not working.
+    languageClient.getFeature('textDocument/didChange').onNotificationSent(async (event) => {
+        const e = event.params;
+        if (e.contentChanges.length > 1 || e.contentChanges.length === 0) {
+            return;
+        }
+
+        const change = e.contentChanges[0];
+        // TextDocumentContentChangeEvent is a union type that does not return a range if the change event is for a full document.
+        // Full document changes are not supported for onautoinsert.
+        if (!('range' in change)) {
+            return;
+        }
+
+        // Convert to a VSCode range for ease of handling.
+        const vscodeRange = languageClient.protocol2CodeConverter.asRange(change.range as Range);
+
+        // Empty or multiline changes are not supported for onautoinsert.
+        if (!vscodeRange.isEmpty || !vscodeRange.isSingleLine) {
+            return;
+        }
+
+        // We need to convert to a vscode TextDocument to apply the correct capabilities.
+        const uri = languageClient.protocol2CodeConverter.asUri(e.textDocument.uri);
+        // This is a no-op because the document is already open (in order to be edited).
+        const document = await vscode.workspace.openTextDocument(uri);
+
+        const onAutoInsertFeature = languageServer.getOnAutoInsertFeature();
+        const onAutoInsertOptions = onAutoInsertFeature?.getOptions(document);
+        const vsTriggerCharacters = onAutoInsertOptions?._vs_triggerCharacters;
+
+        if (vsTriggerCharacters === undefined) {
+            return;
+        }
+
+        // Regular expression to match all whitespace characters except the newline character
+        let changeTrimmed = change.text.replace(/[^\S\n]+/g, '');
+
+        // If the change is empty after removing whitespace, we don't need to process it.
+        if (changeTrimmed.length === 0) {
+            return;
+        }
+
+        // When hitting enter between braces, we can end up with two new lines added (one to move the cursor down to an empty line,
+        // and another to move the close brace to a new line below that).  We want to detect that edit as a single new line trigger.
+        //
+        // Since we already removed all whitespace except new lines above, we can just trim the string to remove new lines as well
+        // and check if there is anything left.  If not, we know the change is just whitespace and new lines and can set the trigger to the new line character.
+        if (changeTrimmed.trim() === '') {
+            changeTrimmed = '\n';
+        }
+
+        if (!vsTriggerCharacters.includes(changeTrimmed)) {
+            return;
+        }
+
+        // We have a single line range so we can compute the length by comparing the start and end character positions.
+        const rangeLength = vscodeRange.end.character - vscodeRange.start.character;
+
+        // The server expects the request position to represent the caret position in the text after the change has already been applied.
+        // We need to calculate what that position would be after the change is applied and send that to the server.
+        const position = vscodeRange.start.translate(0, change.text.length - rangeLength);
+
+        const formattingOptions = getFormattingOptions(document);
+
+        source.cancel();
+        source = new vscode.CancellationTokenSource();
+        try {
+            await applyAutoInsertEdit(
+                position,
+                changeTrimmed,
+                e.textDocument,
+                uri,
+                formattingOptions,
+                languageServer,
+                source.token
+            );
+        } catch (e) {
+            if (e instanceof vscode.CancellationError) {
+                return;
+            }
+
+            throw e;
+        }
+    });
+}
+
+async function applyAutoInsertEdit(
+    position: vscode.Position,
+    changeTextTrimmed: string,
+    textDocumentIdentifier: TextDocumentIdentifier,
+    uri: vscode.Uri,
+    formattingOptions: FormattingOptions,
+    languageServer: RoslynLanguageServer,
+    token: vscode.CancellationToken
+) {
+    const request: RoslynProtocol.OnAutoInsertParams = {
+        _vs_textDocument: textDocumentIdentifier,
+        _vs_position: position,
+        _vs_ch: changeTextTrimmed,
+        _vs_options: formattingOptions,
+    };
+
+    const response = await languageServer.sendRequest(RoslynProtocol.OnAutoInsertRequest.type, request, token);
+    if (response) {
+        const textEdit = response._vs_textEdit;
+        const startPosition = new vscode.Position(textEdit.range.start.line, textEdit.range.start.character);
+        const endPosition = new vscode.Position(textEdit.range.end.line, textEdit.range.end.character);
+
+        let textEdits: (vscode.TextEdit | vscode.SnippetTextEdit)[];
+        if (response._vs_textEditFormat === InsertTextFormat.Snippet) {
+            const docComment = new vscode.SnippetString(textEdit.newText);
+            const edit = vscode.SnippetTextEdit.replace(new vscode.Range(startPosition, endPosition), docComment);
+            // Roslyn already formats the snippet correctly - we don't want the client to try and change the whitespace.
+            edit.keepWhitespace = true;
+            textEdits = [edit];
+        } else {
+            textEdits = [vscode.TextEdit.replace(new vscode.Range(startPosition, endPosition), textEdit.newText)];
+        }
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.set(uri, textEdits);
+        const applied = vscode.workspace.applyEdit(edit);
+        if (!applied) {
+            throw new Error('Tried to apply an edit but an error occurred.');
+        }
+
+        if (response.command !== undefined) {
+            await vscode.commands.executeCommand(response.command.command, response.command.arguments);
+        }
+    }
+}
+
+function getFormattingOptions(document: vscode.TextDocument): FormattingOptions {
+    const editorSettings = vscode.workspace.getConfiguration('editor', document);
+    const detectIndentation = editorSettings.get<boolean>('detectIndentation');
+
+    const editor = detectIndentation
+        ? vscode.window.visibleTextEditors.find((e) => e.document === document)
+        : undefined;
+
+    // VSCode guarantees that retrieving the editor.options.tabSize will return a number
+    const tabSize = (editor?.options.tabSize as number | undefined) ?? editorSettings.get<number>('tabSize') ?? 4;
+    // VSCode guarantees that retrieving the editor.options.insertSpaces will return a boolean
+    const insertSpaces =
+        (editor?.options.insertSpaces as boolean | undefined) ?? editorSettings.get<boolean>('insertSpaces') ?? true;
+    return FormattingOptions.create(tabSize, insertSpaces);
+}

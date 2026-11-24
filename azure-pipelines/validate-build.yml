@@ -1,0 +1,35 @@
+stages:
+- stage: ValidateBuild
+  displayName: 'Validate Build'
+  dependsOn: []
+  jobs:
+  - job: 'BuildWindows'
+    displayName: 'Build Windows'
+    pool:
+      name: NetCore-Public
+      demands: ImageOverride -equals 1es-windows-2022-open
+    steps:
+      - template: /azure-pipelines/build.yml@self
+        parameters:
+          installDotNet: true
+
+  - job: 'BuildLinux'
+    displayName: 'Build Linux'
+    pool:
+      name: NetCore-Public
+      demands: ImageOverride -equals build.ubuntu.2204.amd64.open
+    steps:
+      - template: /azure-pipelines/build.yml@self
+        parameters:
+          installDotNet: true
+
+  - job: 'BuildDarwin'
+    displayName: 'Build Darwin'
+    pool:
+      name: Azure Pipelines
+      vmImage: macOS-latest
+      os: macOS
+    steps:
+      - template: /azure-pipelines/build.yml@self
+        parameters:
+          installDotNet: true

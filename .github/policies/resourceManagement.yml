@@ -1,0 +1,160 @@
+id: 
+name: GitOps.PullRequestIssueManagement
+description: GitOps.PullRequestIssueManagement primitive
+owner: 
+resource: repository
+disabled: false
+where: 
+configuration:
+  resourceManagementConfiguration:
+    scheduledSearches:
+    - description: 'Close inactive issues that need more information'
+      frequencies:
+      - weekday:
+          day: Monday
+          time: 0:0
+      - weekday:
+          day: Tuesday
+          time: 0:0
+      - weekday:
+          day: Wednesday
+          time: 0:0
+      - weekday:
+          day: Thursday
+          time: 0:0
+      - weekday:
+          day: Friday
+          time: 0:0
+      filters:
+      - isIssue
+      - isOpen
+      - hasLabel:
+          label: Needs More Info
+      - noActivitySince:
+          days: 14
+      actions:
+      - addReply:
+          reply: Closing due to 14 days of inactivity while waiting for more information. If you can provide the requested details, please comment and re-open.
+      - closeIssue
+
+    eventResponderTasks:
+
+    - description: Remove "Needs More Info" label when the issue author replies
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Issue_Comment
+      - isAction:
+          action: Created
+      - isIssue
+      - isOpen
+      - isActivitySender:
+          issueAuthor: True
+      - hasLabel:
+          label: Needs More Info
+      then:
+      - removeLabel:
+          label: Needs More Info
+
+    - description: Auto-approve/merge automated merge PRs
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Pull_Request
+      - isPullRequest
+      - isActivitySender:
+          user: github-actions[bot]
+          issueAuthor: False
+      - or:
+        - titleContains:
+            pattern: "[automated] Merge branch"
+            isRegex: False
+        - titleContains:
+            pattern: "[automated] Update main version"
+            isRegex: False
+      - isAction:
+          action: Opened
+      then:
+      - approvePullRequest:
+          comment: Auto-approve
+      - enableAutoMerge:
+          mergeMethod: merge
+
+    - description: Auto-approve/merge automated localization PRs
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Pull_Request
+      - isPullRequest
+      - isActivitySender:
+          user: dotnet-oneloc-localization[bot]
+          issueAuthor: False
+      - titleContains:
+          pattern: "Localization result based on"
+          isRegex: False
+      - isAction:
+          action: Opened
+      then:
+      - approvePullRequest:
+          comment: Auto-approve
+      - enableAutoMerge:
+          mergeMethod: merge
+
+    - description: Add "untriaged" label to issues when opened
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Issues
+      - or:
+        - isAction:
+            action: Opened
+      then:
+      - addLabel:
+          label: untriaged
+
+    - description: Add "OmniSharp" label to issues filed with OmniSharp enabled
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Issues
+      - isAction:
+          action: Opened
+      - bodyContains:
+          pattern: "**Using OmniSharp**: true"
+          isRegex: False
+      then:
+      - addLabel:
+          label: OmniSharp
+
+    - description: Add "C#DK" label to issues filed with C# DevKit installed
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Issues
+      - isAction:
+          action: Opened
+      - or:
+        - bodyContains:
+            pattern: "|csdevkit|ms-dotnettools|"
+            isRegex: False
+        - bodyContains:
+            pattern: "Activating C# + C# Dev Kit..."
+            isRegex: False
+      then:
+      - addLabel:
+          label: C#DK
+
+    - description: Close issues opened with incomplete bug template information
+      triggerOnOwnActions: false
+      if:
+      - payloadType: Issues
+      - isAction:
+          action: Opened
+      - bodyContains:
+          pattern: "Type: <b>Bug</b>\\s*## Issue Description ##\\s*## Steps to Reproduce ##\\s*## Expected Behavior ##\\s*## Actual Behavior ##\\s*Extension version:\\s*"
+          isRegex: True
+      - not:
+          bodyContains:
+            pattern: "### C# log ###\\s*<details>"
+            isRegex: True
+      then:
+      - addReply:
+          reply: If you are running into problems, please open a new issue and provide the requested information. See "[How to file an issue](https://github.com/dotnet/vscode-csharp/blob/main/SUPPORT.md#how-to-file-an-issue)" for instructions. Thanks!
+      - closeIssue
+
+onFailure: 
+onSuccess:

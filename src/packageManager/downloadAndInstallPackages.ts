@@ -1,0 +1,107 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { PackageError } from './packageError';
+import { NestedError } from '../nestedError';
+import { DownloadFile } from './fileDownloader';
+import { InstallZip } from './zipInstaller';
+import { EventStream } from '../eventStream';
+import { NetworkSettingsProvider } from '../networkSettings';
+import { AbsolutePathPackage } from './absolutePathPackage';
+import { touchInstallFile, InstallFileType, deleteInstallFile, installFileExists } from '../common';
+import { InstallationFailure, IntegrityCheckFailure } from '../shared/loggingEvents';
+import { mkdirSync } from 'fs';
+import { PackageInstallStart } from '../shared/loggingEvents';
+import { DownloadValidator } from './isValidDownload';
+import { CancellationToken } from 'vscode';
+import { ITelemetryReporter } from '../shared/telemetryReporter';
+import { DependencyInstallationStatus } from './IInstallDependencies';
+
+export async function downloadAndInstallPackages(
+    packages: AbsolutePathPackage[],
+    provider: NetworkSettingsProvider,
+    eventStream: EventStream,
+    downloadValidator: DownloadValidator,
+    telemetryReporter?: ITelemetryReporter,
+    token?: CancellationToken
+): Promise<DependencyInstallationStatus> {
+    eventStream.post(new PackageInstallStart());
+    const results: DependencyInstallationStatus = {};
+    for (const pkg of packages) {
+        let installationStage = 'touchBeginFile';
+        try {
+            mkdirSync(pkg.installPath.value, { recursive: true });
+            await touchInstallFile(pkg.installPath, InstallFileType.Begin);
+            let count = 1;
+            const willTryInstallingPackage = () => count <= 2; // try 2 times
+            while (willTryInstallingPackage()) {
+                count = count + 1;
+                installationStage = 'downloadPackage';
+                const buffer = await DownloadFile(
+                    pkg.description,
+                    eventStream,
+                    provider,
+                    pkg.url,
+                    pkg.fallbackUrl,
+                    token
+                );
+                if (downloadValidator(buffer, pkg.integrity, eventStream)) {
+                    installationStage = 'installPackage';
+                    await InstallZip(buffer, pkg.description, pkg.installPath, pkg.binaries, eventStream);
+                    installationStage = 'touchLockFile';
+                    await touchInstallFile(pkg.installPath, InstallFileType.Lock);
+                    results[pkg.id] = true;
+                    break;
+                } else {
+                    eventStream.post(new IntegrityCheckFailure(pkg.description, pkg.url, willTryInstallingPackage()));
+                    results[pkg.id] = false;
+                }
+            }
+        } catch (error) {
+            results[pkg.id] = false;
+
+            if (error instanceof NestedError) {
+                const packageError = new PackageError(error.message, pkg, error.err);
+                eventStream.post(new InstallationFailure(installationStage, packageError));
+            } else {
+                eventStream.post(new InstallationFailure(installationStage, error));
+            }
+
+            // Send telemetry for the failure
+            sendInstallationFailureTelemetry(pkg, installationStage, error);
+        } finally {
+            try {
+                if (await installFileExists(pkg.installPath, InstallFileType.Begin)) {
+                    await deleteInstallFile(pkg.installPath, InstallFileType.Begin);
+                }
+            } catch (_) {
+                /* empty */
+            }
+        }
+    }
+
+    return results;
+
+    function sendInstallationFailureTelemetry(pkg: AbsolutePathPackage, installationStage: string, error: any): void {
+        if (!telemetryReporter) {
+            return;
+        }
+
+        const telemetryProperties: { [key: string]: string } = {
+            installStage: installationStage,
+            packageId: pkg.id,
+        };
+
+        if (error instanceof NestedError && error.err instanceof PackageError) {
+            telemetryProperties['error.message'] = error.err.message;
+            telemetryProperties['error.packageUrl'] = error.err.pkg.url;
+        } else if (error instanceof PackageError) {
+            telemetryProperties['error.message'] = error.message;
+            telemetryProperties['error.packageUrl'] = error.pkg.url;
+        }
+
+        telemetryReporter.sendTelemetryEvent('PackageInstallationFailed', telemetryProperties);
+    }
+}
