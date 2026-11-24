@@ -79,7 +79,11 @@ export async function activate(
     const requiredPackageIds: string[] = ['Debugger', 'Razor'];
 
     const csharpDevkitExtension = getCSharpDevKit();
-    const useOmnisharpServer = !csharpDevkitExtension && commonOptions.useOmnisharpServer;
+    // The legacy OmniSharp mode is disabled in this fork: the Roslyn language server is always used.
+    const useOmnisharpServer: boolean = false;
+    if (commonOptions.useOmnisharpServer) {
+        csharpChannel.info('OmniSharp mode is disabled in this build, using the Roslyn language server instead.');
+    }
     if (useOmnisharpServer) {
         requiredPackageIds.push('OmniSharp');
     }
