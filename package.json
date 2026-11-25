@@ -1555,7 +1555,7 @@
           },
           "dotnet.projects.enableAutomaticRestore": {
             "type": "boolean",
-            "default": true,
+            "default": false,
             "description": "%configuration.dotnet.projects.enableAutomaticRestore%"
           },
           "dotnet.projects.enableFileBasedPrograms": {
