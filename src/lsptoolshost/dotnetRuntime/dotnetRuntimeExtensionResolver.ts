@@ -25,6 +25,8 @@ const DotNetMajorVersion = '10';
 const DotNetMinorVersion = '0';
 const DotNetPatchVersion = '5';
 export const DotNetRuntimeVersion = `${DotNetMajorVersion}.${DotNetMinorVersion}.${DotNetPatchVersion}`;
+// This build never downloads .NET: the runtime has to be present on the machine.
+export const downloadDotnet: boolean = false;
 
 /**
  * Resolves the dotnet runtime for a server executable from given options and the dotnet runtime VSCode extension.
@@ -77,11 +79,22 @@ export class DotnetRuntimeExtensionResolver implements IHostExecutableResolver {
             'dotnet.findPath',
             findPathRequest
         );
-        if (acquireResult === undefined) {
+        if (acquireResult === undefined && downloadDotnet) {
             this.channel.appendLine(
                 `Did not find .NET ${DotNetRuntimeVersion} on path, falling back to acquire runtime via ${DotNetRuntimeExtensionId}`
             );
             acquireResult = await this.acquireDotNetProcessDependencies(runtimeMode);
+        }
+
+        if (acquireResult === undefined) {
+            const message = vscode.l10n.t(
+                'The C# extension could not find the .NET {0} runtime or later on this machine and will not download it. Install the runtime or set its path in the .NET Install Tool setting "{1}".',
+                DotNetRuntimeVersion,
+                'dotnetAcquisitionExtension.existingDotnetPath'
+            );
+            this.channel.appendLine(message);
+            await vscode.window.showErrorMessage(message);
+            throw new Error(message);
         }
 
         const dotnetExecutablePath = acquireResult.dotnetPath;

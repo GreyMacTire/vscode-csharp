@@ -206,6 +206,7 @@
   "Recording trace... Click Cancel to stop and save.": "Recording trace... Click Cancel to stop and save.",
   "Recording logs... Click Cancel to stop and save.": "Recording logs... Click Cancel to stop and save.",
   "Collecting C# Logs": "Collecting C# Logs",
+  "The C# extension could not find the .NET {0} runtime or later on this machine and will not download it. Install the runtime or set its path in the .NET Install Tool setting \"{1}\".": "The C# extension could not find the .NET {0} runtime or later on this machine and will not download it. Install the runtime or set its path in the .NET Install Tool setting \"{1}\".",
   "Nested Code Action": "Nested Code Action",
   "Fix All: ": "Fix All: ",
   "Pick a fix all scope": "Pick a fix all scope",

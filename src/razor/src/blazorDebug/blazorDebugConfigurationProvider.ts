@@ -15,7 +15,10 @@ import * as cp from 'child_process';
 import { getExtensionPath } from '../../../common';
 import { getCSharpDevKit } from '../../../utils/getCSharpDevKit';
 import { CSharpExtensionId } from '../../../constants/csharpExtensionId';
-import { DotNetRuntimeVersion } from '../../../lsptoolshost/dotnetRuntime/dotnetRuntimeExtensionResolver';
+import {
+    DotNetRuntimeVersion,
+    downloadDotnet,
+} from '../../../lsptoolshost/dotnetRuntime/dotnetRuntimeExtensionResolver';
 import {
     IDotnetAcquireContext,
     IDotnetAcquireResult,
@@ -525,7 +528,7 @@ export class BlazorDebugConfigurationProvider implements vscode.DebugConfigurati
                 'dotnet.findPath',
                 findPathRequest
             );
-            if (acquireResult === undefined) {
+            if (acquireResult === undefined && downloadDotnet) {
                 const acquireContext: IDotnetAcquireContext = {
                     version: DotNetRuntimeVersion.substring(0, DotNetRuntimeVersion.lastIndexOf('.')),
                     requestingExtensionId: CSharpExtensionId,
