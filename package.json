@@ -1832,19 +1832,19 @@
           "appsettings.json",
           "appsettings.*.json"
         ],
-        "url": "https://json.schemastore.org/appsettings"
+        "url": "./schemas/appsettings.schema.json"
       },
       {
         "fileMatch": "omnisharp.json",
-        "url": "http://json.schemastore.org/omnisharp"
+        "url": "./schemas/omnisharp.schema.json"
       },
       {
         "fileMatch": "global.json",
-        "url": "http://json.schemastore.org/global"
+        "url": "./schemas/global.schema.json"
       },
       {
         "fileMatch": "launchSettings.json",
-        "url": "https://json.schemastore.org/launchsettings.json"
+        "url": "./schemas/launchSettings.schema.json"
       }
     ],
     "commands": [
