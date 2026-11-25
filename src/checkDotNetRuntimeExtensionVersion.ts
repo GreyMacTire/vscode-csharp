@@ -11,28 +11,24 @@ const requiredDotNetRuntimeExtensionVersion = '2.2.3';
 
 export async function checkDotNetRuntimeExtensionVersion(context: vscode.ExtensionContext): Promise<void> {
     const dotnetRuntimeExtension = vscode.extensions.getExtension(DotNetRuntimeExtensionId);
-    const dotnetRuntimeExtensionVersion = dotnetRuntimeExtension?.packageJSON.version;
+    // The .NET Install Tool is not declared as a dependency in this fork, so it may not be installed at all.
+    const dotnetRuntimeExtensionVersion = dotnetRuntimeExtension?.packageJSON.version ?? '0.0.0';
     if (lt(dotnetRuntimeExtensionVersion, requiredDotNetRuntimeExtensionVersion)) {
-        const button = vscode.l10n.t('Update and reload');
         const prompt = vscode.l10n.t(
             'The {0} extension requires at least {1} of the .NET Install Tool ({2}) extension. Please update to continue',
             context.extension.packageJSON.displayName,
             requiredDotNetRuntimeExtensionVersion,
             DotNetRuntimeExtensionId
         );
-        const selection = await vscode.window.showErrorMessage(prompt, button);
-        if (selection === button) {
-            await vscode.commands.executeCommand('workbench.extensions.installExtension', DotNetRuntimeExtensionId);
-            await vscode.commands.executeCommand('workbench.action.reloadWindow');
-        } else {
-            throw new Error(
-                vscode.l10n.t(
-                    'Version {0} of the .NET Install Tool ({1}) was not found, {2} will not activate.',
-                    requiredDotNetRuntimeExtensionVersion,
-                    DotNetRuntimeExtensionId,
-                    context.extension.packageJSON.displayName
-                )
-            );
-        }
+        // The tool is installed manually in this fork, so no button installs it from the Marketplace.
+        await vscode.window.showErrorMessage(prompt);
+        throw new Error(
+            vscode.l10n.t(
+                'Version {0} of the .NET Install Tool ({1}) was not found, {2} will not activate.',
+                requiredDotNetRuntimeExtensionVersion,
+                DotNetRuntimeExtensionId,
+                context.extension.packageJSON.displayName
+            )
+        );
     }
 }

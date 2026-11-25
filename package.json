@@ -105,9 +105,6 @@
     "vscode:prepublish": "npm run package",
     "vsix:release:package": "npx ts-node tasks/packaging/vsixReleasePackage.ts"
   },
-  "extensionDependencies": [
-    "ms-dotnettools.vscode-dotnet-runtime"
-  ],
   "dependencies": {
     "@github/copilot-language-server": "1.290.0",
     "@microsoft/servicehub-framework": "4.2.99-beta",
