@@ -138,6 +138,13 @@
     ]
   },
   "You can modify the default arguments if needed": "You can modify the default arguments if needed",
+  "{0} not found, install it manually (for example, run \"{1}\") and try again./{0} is the tool name and should not be localized{1} is the install command": {
+    "message": "{0} not found, install it manually (for example, run \"{1}\") and try again.",
+    "comment": [
+      "{0} is the tool name and should not be localized",
+      "{1} is the install command"
+    ]
+  },
   "Install": "Install",
   "{0} not found, run \"{1}\" to install it?/{0} is the tool name and should not be localized{1} is the install command": {
     "message": "{0} not found, run \"{1}\" to install it?",

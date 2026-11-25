@@ -192,6 +192,9 @@ export async function promptForToolArguments(toolName: string, defaultArgs: stri
     });
 }
 
+// This build never installs diagnostic tools: they have to be present on the machine.
+const installDotnetTools: boolean = false;
+
 /**
  * Verifies that a dotnet global tool is installed, and prompts the user to install it if not.
  * @param toolName The name of the dotnet tool (e.g., 'dotnet-trace', 'dotnet-dump', 'dotnet-gcdump')
@@ -214,6 +217,17 @@ export async function verifyOrAcquireDotnetTool(
         return true; // If the command succeeds, the tool is installed.
     } catch (error) {
         channel.debug(`Failed to execute ${toolName} --version with error: ${error}`);
+    }
+
+    if (!installDotnetTools) {
+        await vscode.window.showErrorMessage(
+            vscode.l10n.t({
+                message: '{0} not found, install it manually (for example, run "{1}") and try again.',
+                args: [toolName, `dotnet tool install --global ${toolName}`],
+                comment: ['{0} is the tool name and should not be localized', '{1} is the install command'],
+            })
+        );
+        return false;
     }
 
     const confirmAction = {
