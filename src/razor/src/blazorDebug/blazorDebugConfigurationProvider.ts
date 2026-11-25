@@ -17,6 +17,7 @@ import { getCSharpDevKit } from '../../../utils/getCSharpDevKit';
 import { CSharpExtensionId } from '../../../constants/csharpExtensionId';
 import {
     DotNetRuntimeVersion,
+    activateDotNetRuntimeExtension,
     downloadDotnet,
 } from '../../../lsptoolshost/dotnetRuntime/dotnetRuntimeExtensionResolver';
 import {
@@ -524,6 +525,7 @@ export class BlazorDebugConfigurationProvider implements vscode.DebugConfigurati
         };
 
         try {
+            await activateDotNetRuntimeExtension();
             let acquireResult = await vscode.commands.executeCommand<IDotnetAcquireResult | undefined>(
                 'dotnet.findPath',
                 findPathRequest

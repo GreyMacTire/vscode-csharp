@@ -29,6 +29,14 @@ export const DotNetRuntimeVersion = `${DotNetMajorVersion}.${DotNetMinorVersion}
 export const downloadDotnet: boolean = false;
 
 /**
+ * Activates the .NET Install Tool. This build does not declare it as a dependency, so VS Code does not
+ * activate it before this extension, and its API commands exist only once it has been activated.
+ */
+export async function activateDotNetRuntimeExtension(): Promise<void> {
+    await vscode.extensions.getExtension(DotNetRuntimeExtensionId)?.activate();
+}
+
+/**
  * Resolves the dotnet runtime for a server executable from given options and the dotnet runtime VSCode extension.
  */
 export class DotnetRuntimeExtensionResolver implements IHostExecutableResolver {
@@ -75,6 +83,7 @@ export class DotnetRuntimeExtensionResolver implements IHostExecutableResolver {
             }
         }
 
+        await activateDotNetRuntimeExtension();
         let acquireResult = await vscode.commands.executeCommand<IDotnetAcquireResult | undefined>(
             'dotnet.findPath',
             findPathRequest
